@@ -1,0 +1,8 @@
+interface:
+  display_name: "Lead List CRM"
+  short_description: "Build a targeted contact list, enrich it with emails + LinkedIn, send paced LinkedIn invites, and track accepts/replies/follow-ups in a two-button local CRM."
+  default_prompt: "Help me build a targeted outreach list (Crustdata/Deepline), enrich it with emails and LinkedIn, then set up the two-button CRM to send paced invites and track follow-ups."
+  brand_color: "#111111"
+
+policy:
+  allow_implicit_invocation: true

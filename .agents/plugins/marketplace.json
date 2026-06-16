@@ -1,0 +1,20 @@
+{
+  "name": "lead-list-crm",
+  "interface": {
+    "displayName": "Lead List CRM"
+  },
+  "plugins": [
+    {
+      "name": "lead-list-crm",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

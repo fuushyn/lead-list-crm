@@ -1,0 +1,13 @@
+{
+  "name": "lead-list-crm",
+  "version": "1.0.0",
+  "description": "Build a targeted contact list (Deepline/Crustdata), enrich it with emails + LinkedIn handles, send paced LinkedIn connection requests, and manage accepts/replies/follow-ups in a barebones two-button local CRM.",
+  "author": {
+    "name": "fuushyn",
+    "url": "https://github.com/fuushyn"
+  },
+  "homepage": "https://github.com/fuushyn/lead-list-crm",
+  "repository": "https://github.com/fuushyn/lead-list-crm",
+  "license": "MIT",
+  "keywords": ["crm", "outreach", "leads", "prospecting", "gtm", "linkedin", "crustdata", "deepline", "unipile", "enrichment"]
+}

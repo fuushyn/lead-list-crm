@@ -1,0 +1,24 @@
+{
+  "name": "lead-list-crm",
+  "owner": {
+    "name": "fuushyn",
+    "url": "https://github.com/fuushyn"
+  },
+  "metadata": {
+    "description": "Marketplace hosting the lead-list-crm skill."
+  },
+  "plugins": [
+    {
+      "name": "lead-list-crm",
+      "description": "Build a targeted contact list, enrich emails + LinkedIn, send paced LinkedIn invites, and manage the pipeline in a two-button local CRM.",
+      "version": "1.0.0",
+      "author": {
+        "name": "fuushyn",
+        "url": "https://github.com/fuushyn"
+      },
+      "source": "./",
+      "category": "productivity",
+      "homepage": "https://github.com/fuushyn/lead-list-crm"
+    }
+  ]
+}
