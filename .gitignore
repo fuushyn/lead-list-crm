@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+crm.csv
+crm_app.log
+*.tmp
