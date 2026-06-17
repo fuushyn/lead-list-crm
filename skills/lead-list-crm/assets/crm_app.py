@@ -183,6 +183,8 @@ def page():
     c=lambda f,v: sum(1 for r in rows if r.get(f)==v)
     n_inv=c("invited","yes"); n_acc=c("invite_status","accepted"); n_msg=c("messaged","yes"); n_rep=c("replied","yes")
     n_left=sum(1 for r in rows if r.get("invited")!="yes" and r.get("member_id"))
+    acc_rate = f"{round(100*n_acc/n_inv)}%" if n_inv else "—"   # accepted / invited
+    rep_rate = f"{round(100*n_rep/n_msg)}%" if n_msg else "—"   # replied / messaged
     due=sorted([r for r in rows if r.get("next_followup")], key=lambda r:r["next_followup"])
     refresh='<meta http-equiv="refresh" content="4">' if STATE["busy"] else ''
     show=sorted(rows, key=lambda r:(0 if r.get("replied")=="yes" else 1,
@@ -199,6 +201,7 @@ def page():
 body{{font:14px -apple-system,system-ui,sans-serif;max-width:1000px;margin:30px auto;padding:0 16px;color:#111}}
 .bar{{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0;font-weight:600}}
 .bar span{{background:#f3f4f6;padding:6px 12px;border-radius:8px}}
+.bar .rate{{background:#111;color:#fff;font-size:16px}} .bar .rate small{{opacity:.6;font-weight:500}}
 .actions{{display:flex;gap:12px;align-items:center;margin:18px 0;padding:14px;background:#fafafa;border:1px solid #eee;border-radius:10px}}
 button{{background:#111;color:#fff;border:0;padding:9px 16px;border-radius:8px;font-weight:600;cursor:pointer}}
 button:disabled{{opacity:.4}} input{{width:64px;padding:8px;border:1px solid #ccc;border-radius:6px}}
@@ -206,6 +209,7 @@ button:disabled{{opacity:.4}} input{{width:64px;padding:8px;border:1px solid #cc
 table{{border-collapse:collapse;width:100%;margin-top:14px}} th,td{{text-align:left;padding:7px 10px;border-bottom:1px solid #eee}}
 th{{color:#666;font-size:12px;text-transform:uppercase}}</style></head><body>
 <h2>Outreach CRM</h2>
+<div class=bar><span class=rate>Acceptance {acc_rate} <small>({n_acc}/{n_inv})</small></span><span class=rate>Reply {rep_rate} <small>({n_rep}/{n_msg})</small></span></div>
 <div class=bar><span>Invited {n_inv}</span><span>🟢 Accepted {n_acc}</span><span>✉️ Messaged {n_msg}</span><span>✅ Replied {n_rep}</span><span>Uninvited left {n_left}</span></div>
 <div class=actions>
  <form method=post action=/send style="display:flex;gap:8px;align-items:center;margin:0">
