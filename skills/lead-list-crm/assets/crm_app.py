@@ -134,13 +134,16 @@ def has_reply(chat_id):
     _, d = api("GET", f"/api/v1/chats/{chat_id}/messages?limit=30")
     return any(m.get("is_sender") in (0, False) for m in d.get("items", []))
 
-def do_update():
+def do_update(scope="invited"):
     rows = load()
     STATE["msg"]="Fetching chats…"
     chats = chat_index()
-    inv = [r for r in rows if r.get("invited")=="yes" and r.get("member_id")]
+    if scope == "all":
+        inv = [r for r in rows if r.get("member_id")]                       # everyone resolvable
+    else:
+        inv = [r for r in rows if r.get("invited")=="yes" and r.get("member_id")]  # invited only
     for i, r in enumerate(inv, 1):
-        STATE["msg"]=f"Updating… {i}/{len(inv)}"
+        STATE["msg"]=f"Updating ({scope})… {i}/{len(inv)}"
         _, d = api("GET", f"/api/v1/users/{r['member_id']}?account_id={ACCT}")
         nd = d.get("network_distance","")
         r["invite_status"]="accepted" if nd=="FIRST_DEGREE" else (r.get("invite_status") or "pending")
@@ -163,7 +166,7 @@ def do_update():
     rep=sum(1 for r in inv if r.get("replied")=="yes")
     due=sorted([r for r in rows if r.get("next_followup")], key=lambda r:r["next_followup"])
     nxt = hfmt(due[0]["next_followup"]) if due else "—"
-    STATE["msg"]=f"Updated {len(inv)} invited. Accepted: {acc} · Replied: {rep}. Next follow-up: {nxt}."
+    STATE["msg"]=f"Updated {len(inv)} ({scope}). Accepted: {acc} · Replied: {rep}. Next follow-up: {nxt}."
 
 def run_bg(fn, *a):
     def wrap():
@@ -209,6 +212,7 @@ th{{color:#666;font-size:12px;text-transform:uppercase}}</style></head><body>
    <button {'disabled' if STATE['busy'] else ''}>Send invites</button>
    <input name=n type=number value=10 min=1 max=50> next uninvited</form>
  <form method=post action=/update style=margin:0><button {'disabled' if STATE['busy'] else ''}>Update CRM</button></form>
+ <form method=post action=/update_all style=margin:0><button {'disabled' if STATE['busy'] else ''} title="re-check every contact, not just invited">Update all</button></form>
 </div>
 <div class=status>{html.escape(STATE['msg'])}</div>
 <b>Next to follow up:</b> {nxt} <span style=color:#888>({TZ.key})</span>
@@ -225,7 +229,8 @@ class H(BaseHTTPRequestHandler):
         p=urlparse(self.path).path
         if not STATE["busy"]:
             if p=="/send":   run_bg(do_send, max(1,min(50,int(body.get("n",["10"])[0]))))
-            elif p=="/update": run_bg(do_update)
+            elif p=="/update": run_bg(do_update, "invited")
+            elif p=="/update_all": run_bg(do_update, "all")
         self.send_response(303); self.send_header("location","/"); self.end_headers()
 
 if __name__=="__main__":
