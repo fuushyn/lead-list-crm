@@ -76,20 +76,44 @@ def save(rows):
     os.replace(CSV+".tmp", CSV)
 
 # ---------- ACTION 1: SEND INVITES (paced) ----------
+ACCOUNT_ERRS = ("disconnected_account", "missing_credentials", "invalid_credentials", "credentials")
+
+def account_blocked():
+    """Return a human reason if the LinkedIn account can't send, else None."""
+    st, d = api("GET", f"/api/v1/accounts/{ACCT}")
+    if st != 200:
+        return f"account check failed (HTTP {st})"
+    sts = [s.get("status") for s in d.get("sources", [])]
+    if not sts or any(s != "OK" for s in sts):
+        return f"not connected (source status: {','.join(sts) or 'unknown'})"
+    return None
+
 def do_send(n):
     rows = load()
+    # PREFLIGHT: if the LinkedIn account is disconnected, fail the whole run and surface it.
+    reason = account_blocked()
+    if reason:
+        STATE["msg"] = f"❌ ABORTED — LinkedIn account {reason}. Reconnect at dashboard.unipile.com, then retry. No invites sent."
+        return
     queue = [r for r in rows if r.get("invited") != "yes" and r.get("member_id")][:n]
     STATE["msg"] = f"Sending {len(queue)} invites (paced)…"
     sent = fail = 0
     for i, r in enumerate(queue, 1):
         st, resp = api("POST", "/api/v1/users/invite", {"provider_id": r["member_id"], "account_id": ACCT})
-        ok = st in (200, 201)
-        r["invited"]="yes"; r["invited_date"]=ds(today()); r["last_touch"]=ds(today())
-        r["invite_status"]="pending" if ok else "error"
-        if ok: sent += 1
+        etype = (resp or {}).get("type", "")
+        # ACCOUNT-LEVEL failure mid-run -> abort everything, mark nothing, surface the error.
+        if st == 401 or any(e in etype for e in ACCOUNT_ERRS):
+            STATE["msg"] = (f"❌ ABORTED at {i}/{len(queue)} — LinkedIn disconnected "
+                            f"({etype or 'HTTP '+str(st)}). {sent} sent before failure; remaining untouched. "
+                            f"Reconnect in Unipile, then retry.")
+            return
+        if st in (200, 201):
+            r["invited"]="yes"; r["invited_date"]=ds(today()); r["last_touch"]=ds(today()); r["invite_status"]="pending"; sent += 1
+        elif "already_invited" in etype:
+            r["invited"]="yes"; r["invited_date"]=ds(today()); r["invite_status"]="already_invited"; sent += 1
         else:
-            fail += 1
-            r["notes"]=(r.get("notes","")+f" invite_err:{resp.get('type','?')}").strip()
+            fail += 1   # per-contact error: leave invited=no so it stays retryable
+            r["notes"]=(r.get("notes","")+f" invite_err:{etype or st}").strip()
         save(rows)
         STATE["msg"]=f"Sending… {i}/{len(queue)} ({sent} ok, {fail} fail)"
         if i < len(queue):
