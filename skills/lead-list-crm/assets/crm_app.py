@@ -26,7 +26,7 @@ KEY  = os.environ["UNIPILE_API_KEY"]
 PORT = int(os.environ.get("CRM_PORT", "8787"))
 TZ   = ZoneInfo(os.environ.get("CRM_TZ", "America/Los_Angeles"))
 COLS = ["person_name","company","role","member_id","linkedin","invited","invited_date",
-        "invite_status","messaged","replied","last_touch","next_followup","notes"]
+        "invite_status","messaged","replied","last_touch","next_followup","notes","skip"]
 MAX_ROWS = 2000
 
 # per-list state + locks (no cross-tab pollution)
@@ -101,7 +101,7 @@ def do_send(label, n):
     if reason:
         S["msg"] = f"❌ ABORTED — LinkedIn account {reason}. Reconnect at dashboard.unipile.com, then retry. No invites sent."
         return
-    queue = [r for r in rows if r.get("invited") != "yes" and r.get("member_id")][:n]
+    queue = [r for r in rows if r.get("invited") != "yes" and r.get("member_id") and r.get("skip") != "yes"][:n]
     S["msg"] = f"Sending {len(queue)} invites (paced)…"; sent = fail = 0
     for i, r in enumerate(queue, 1):
         sc, resp = api("POST", "/api/v1/users/invite", {"provider_id": r["member_id"], "account_id": ACCT})
@@ -154,8 +154,8 @@ def do_update(label, scope):
     S["msg"]="Reconciling sent invites…"; recon = reconcile_sent(rows)
     if recon: save(path, rows)
     S["msg"]="Fetching chats…"; chats = chat_index()
-    inv = [r for r in rows if r.get("member_id")] if scope=="all" \
-          else [r for r in rows if r.get("invited")=="yes" and r.get("member_id")]
+    inv = [r for r in rows if r.get("member_id") and r.get("skip")!="yes"] if scope=="all" \
+          else [r for r in rows if r.get("invited")=="yes" and r.get("member_id") and r.get("skip")!="yes"]
     for i, r in enumerate(inv, 1):
         S["msg"]=f"Updating ({scope})… {i}/{len(inv)}"
         _, d = api("GET", f"/api/v1/users/{r['member_id']}?account_id={ACCT}")
@@ -188,8 +188,13 @@ def run_bg(label, fn, *a):
 
 # ---------- UI ----------
 PAGE_SIZE = 50
-FILTERS = ["all","uninvited","pending","accepted","messaged","replied"]
+FILTERS = ["all","uninvited","pending","accepted","messaged","replied","skipped"]
+def rowkey(r): return r.get("member_id") or (r.get("person_name","")+"|"+r.get("company",""))
 def matches(r, status):
+    sk = r.get("skip")=="yes"
+    if status=="skipped": return sk
+    if status=="all":     return True
+    if sk: return False                       # no-op rows hidden from action filters
     if status=="uninvited": return r.get("invited")!="yes"
     if status=="pending":   return r.get("invited")=="yes" and r.get("invite_status")!="accepted" and r.get("replied")!="yes"
     if status=="accepted":  return r.get("invite_status")=="accepted"
@@ -202,7 +207,7 @@ def page(active, status="all", q="", pg=1):
     rows = load(path)
     c=lambda f,v: sum(1 for r in rows if r.get(f)==v)
     n_inv=c("invited","yes"); n_acc=c("invite_status","accepted"); n_msg=c("messaged","yes"); n_rep=c("replied","yes")
-    n_left=sum(1 for r in rows if r.get("invited")!="yes" and r.get("member_id"))
+    n_left=sum(1 for r in rows if r.get("invited")!="yes" and r.get("member_id") and r.get("skip")!="yes")
     acc_rate = f"{round(100*n_acc/n_inv)}%" if n_inv else "—"
     rep_rate = f"{round(100*n_rep/n_msg)}%" if n_msg else "—"
     due=sorted([r for r in rows if r.get("next_followup")], key=lambda r:r["next_followup"])
@@ -215,12 +220,20 @@ def page(active, status="all", q="", pg=1):
     fl=[r for r in show if matches(r,status) and (not ql or ql in (r.get('person_name','')+' '+r.get('company','')+' '+r.get('role','')).lower())]
     total=len(fl); pages=max(1,(total+PAGE_SIZE-1)//PAGE_SIZE); pg=max(1,min(pg,pages))
     page_rows=fl[(pg-1)*PAGE_SIZE:pg*PAGE_SIZE]
+    e=html.escape
+    hid=f'<input type=hidden name=list value="{e(active)}"><input type=hidden name=status value="{e(status)}"><input type=hidden name=q value="{e(q)}"><input type=hidden name=page value="{pg}">'
     trs=[]
     for r in page_rows:
-        badge="✅ replied" if r.get("replied")=="yes" else ("🟢 accepted" if r.get("invite_status")=="accepted" else ("🟡 pending" if r.get("invited")=="yes" else "—"))
+        sk = r.get("skip")=="yes"
+        badge="⊘ no-op" if sk else ("✅ replied" if r.get("replied")=="yes" else ("🟢 accepted" if r.get("invite_status")=="accepted" else ("🟡 pending" if r.get("invited")=="yes" else "—")))
         msg="✉️" if r.get("messaged")=="yes" else ""
-        li=f'<a href="{html.escape(r.get("linkedin",""))}" target=_blank>link</a>' if r.get("linkedin") else ""
-        trs.append(f"<tr><td>{html.escape(r.get('person_name',''))}</td><td>{html.escape(r.get('company',''))}</td><td>{html.escape(r.get('role',''))}</td><td>{badge}</td><td>{msg}</td><td>{html.escape(hfmt(r.get('next_followup','')))}</td><td>{li}</td></tr>")
+        li=f'<a href="{e(r.get("linkedin",""))}" target=_blank>link</a>' if r.get("linkedin") else ""
+        kk=e(rowkey(r))
+        toggle=(f'<form method=post action=/unskip style=display:inline>{hid}<input type=hidden name=key value="{kk}"><button class=mini>undo</button></form>'
+                if sk else
+                f'<form method=post action=/skip style=display:inline>{hid}<input type=hidden name=key value="{kk}"><button class=mini>no-op</button></form>')
+        rm=f'<form method=post action=/remove style="display:inline;margin-left:4px" onsubmit="return confirm(\'Remove this person from the list?\')">{hid}<input type=hidden name=key value="{kk}"><button class="mini rm">✕</button></form>'
+        trs.append(f'<tr{" style=opacity:.45" if sk else ""}><td>{e(r.get("person_name",""))}</td><td>{e(r.get("company",""))}</td><td>{e(r.get("role",""))}</td><td>{badge}</td><td>{msg}</td><td>{e(hfmt(r.get("next_followup","")))}</td><td>{li}</td><td>{toggle}{rm}</td></tr>')
     nxt=(html.escape(hfmt(due[0]['next_followup']))+' — '+html.escape(due[0]['person_name'])+' ('+html.escape(due[0]['company'])+')') if due else '— run Update CRM'
     tabs="".join(f'<a class="tab {"on" if lbl==active else ""}" href="/?list={lbl}">{html.escape(lbl)} <small>{nrows(p)}</small>{" ⏳" if st(lbl)["busy"] else ""}</a>' for lbl,p in lists().items())
     h=html.escape
@@ -252,6 +265,8 @@ th{{color:#666;font-size:12px;text-transform:uppercase}}
 .chip{{padding:5px 11px;text-decoration:none;color:#555;background:#f3f4f6;border-radius:999px;font-weight:600;font-size:12px}}
 .chip.on{{background:#111;color:#fff}} .clr{{color:#888;text-decoration:none;align-self:center}}
 .pg{{margin:10px 0;color:#444}} .pg a{{text-decoration:none;font-weight:600;color:#111}} .pg .off{{color:#bbb}}
+.mini{{background:#eee;color:#333;border:0;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer}}
+.mini.rm{{background:#fde8e8;color:#b42318}}
 </style></head><body>
 <h2>Outreach CRM</h2>
 <div class=tabs>{tabs}</div>
@@ -268,7 +283,7 @@ th{{color:#666;font-size:12px;text-transform:uppercase}}
 <b>Next to follow up:</b> {nxt} <span style=color:#888>({TZ.key})</span>
 <div class=filterbar>{chips}<span style=flex:1></span>{search}</div>
 {pager}
-<table><tr><th>Name</th><th>Company</th><th>Segment</th><th>Status</th><th>Msg</th><th>Follow up</th><th>LI</th></tr>{''.join(trs)}</table>
+<table><tr><th>Name</th><th>Company</th><th>Segment</th><th>Status</th><th>Msg</th><th>Follow up</th><th>LI</th><th>Act</th></tr>{''.join(trs)}</table>
 {pager}
 </body></html>"""
 
@@ -283,12 +298,22 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(page(active, status, qq, pg).encode())
     def do_POST(self):
         ln=int(self.headers.get("content-length",0)); body=parse_qs(self.rfile.read(ln).decode())
-        active,_=resolve(body.get("list",["main"])[0]); p=urlparse(self.path).path
+        active,path=resolve(body.get("list",["main"])[0]); p=urlparse(self.path).path
+        status=body.get("status",["all"])[0]; qq=body.get("q",[""])[0]; pgv=body.get("page",["1"])[0]
         if not st(active)["busy"]:
             if p=="/send":   run_bg(active, do_send, max(1,min(50,int(body.get("n",["10"])[0]))))
             elif p=="/update": run_bg(active, do_update, "invited")
             elif p=="/update_all": run_bg(active, do_update, "all")
-        self.send_response(303); self.send_header("location",f"/?list={active}"); self.end_headers()
+            elif p in ("/skip","/unskip","/remove"):
+                key=body.get("key",[""])[0]; rows=load(path)
+                if p=="/remove":
+                    rows=[r for r in rows if rowkey(r)!=key]
+                else:
+                    for r in rows:
+                        if rowkey(r)==key: r["skip"]="yes" if p=="/skip" else ""
+                save(path, rows)
+        loc=f"/?list={active}&status={status}&page={pgv}"+(f"&q={quote(qq)}" if qq else "")
+        self.send_response(303); self.send_header("location",loc); self.end_headers()
 
 if __name__=="__main__":
     print(f"CRM ({ACCT}) at http://127.0.0.1:{PORT}  ·  lists={list(lists())}  ·  tz={TZ.key}")
