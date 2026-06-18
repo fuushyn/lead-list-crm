@@ -19,7 +19,7 @@ import os, csv, json, time, random, threading, glob, urllib.request, urllib.erro
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, quote
 
 DSN  = os.environ["UNIPILE_DSN"].rstrip("/")
 KEY  = os.environ["UNIPILE_API_KEY"]
@@ -187,7 +187,17 @@ def run_bg(label, fn, *a):
     threading.Thread(target=wrap, daemon=True).start()
 
 # ---------- UI ----------
-def page(active):
+PAGE_SIZE = 50
+FILTERS = ["all","uninvited","pending","accepted","messaged","replied"]
+def matches(r, status):
+    if status=="uninvited": return r.get("invited")!="yes"
+    if status=="pending":   return r.get("invited")=="yes" and r.get("invite_status")!="accepted" and r.get("replied")!="yes"
+    if status=="accepted":  return r.get("invite_status")=="accepted"
+    if status=="messaged":  return r.get("messaged")=="yes"
+    if status=="replied":   return r.get("replied")=="yes"
+    return True
+
+def page(active, status="all", q="", pg=1):
     active, path = resolve(active); S = st(active); busy = S["busy"]
     rows = load(path)
     c=lambda f,v: sum(1 for r in rows if r.get(f)==v)
@@ -200,9 +210,13 @@ def page(active):
     show=sorted(rows, key=lambda r:(0 if r.get("replied")=="yes" else 1,
                                     0 if r.get("invite_status")=="accepted" else 1,
                                     0 if r.get("invited")=="yes" else 2, r.get("company","")))
-    extra = len(show) - MAX_ROWS
+    if status not in FILTERS: status="all"
+    ql=q.lower().strip()
+    fl=[r for r in show if matches(r,status) and (not ql or ql in (r.get('person_name','')+' '+r.get('company','')+' '+r.get('role','')).lower())]
+    total=len(fl); pages=max(1,(total+PAGE_SIZE-1)//PAGE_SIZE); pg=max(1,min(pg,pages))
+    page_rows=fl[(pg-1)*PAGE_SIZE:pg*PAGE_SIZE]
     trs=[]
-    for r in show[:MAX_ROWS]:
+    for r in page_rows:
         badge="✅ replied" if r.get("replied")=="yes" else ("🟢 accepted" if r.get("invite_status")=="accepted" else ("🟡 pending" if r.get("invited")=="yes" else "—"))
         msg="✉️" if r.get("messaged")=="yes" else ""
         li=f'<a href="{html.escape(r.get("linkedin",""))}" target=_blank>link</a>' if r.get("linkedin") else ""
@@ -210,6 +224,16 @@ def page(active):
     nxt=(html.escape(hfmt(due[0]['next_followup']))+' — '+html.escape(due[0]['person_name'])+' ('+html.escape(due[0]['company'])+')') if due else '— run Update CRM'
     tabs="".join(f'<a class="tab {"on" if lbl==active else ""}" href="/?list={lbl}">{html.escape(lbl)} <small>{nrows(p)}</small>{" ⏳" if st(lbl)["busy"] else ""}</a>' for lbl,p in lists().items())
     h=html.escape
+    qenc=quote(q)
+    qs=lambda **kw: "&".join(f"{k}={v}" for k,v in {"list":active,"status":status,**({"q":qenc} if q else {}),**kw}.items())
+    chips="".join(f'<a class="chip {"on" if s==status else ""}" href="/?{qs(status=s,page=1)}">{s}</a>' for s in FILTERS)
+    search=(f'<form method=get style="margin:0;display:flex;gap:6px">'
+            f'<input type=hidden name=list value="{h(active)}"><input type=hidden name=status value="{h(status)}">'
+            f'<input name=q value="{h(q)}" placeholder="search name / company / segment" style="padding:7px;border:1px solid #ccc;border-radius:6px;width:240px">'
+            f'<button>search</button>{f" <a class=clr href=/?list={active}>clear</a>" if q else ""}</form>')
+    prev=f'<a href="/?{qs(page=pg-1)}">‹ prev</a>' if pg>1 else '<span class=off>‹ prev</span>'
+    nxtl=f'<a href="/?{qs(page=pg+1)}">next ›</a>' if pg<pages else '<span class=off>next ›</span>'
+    pager=f'<div class=pg>{prev} &nbsp; page {pg} of {pages} <small>({total} rows{(" · filtered" if (status!="all" or q) else "")})</small> &nbsp; {nxtl}</div>'
     return f"""<!doctype html><html><head><meta charset=utf-8>{refresh}<title>Outreach CRM</title><style>
 body{{font:14px -apple-system,system-ui,sans-serif;max-width:1040px;margin:28px auto;padding:0 16px;color:#111}}
 .tabs{{display:flex;gap:6px;margin:6px 0 16px;border-bottom:2px solid #eee}}
@@ -223,7 +247,12 @@ button{{background:#111;color:#fff;border:0;padding:9px 16px;border-radius:8px;f
 button:disabled{{opacity:.4}} input[type=number]{{width:64px;padding:8px;border:1px solid #ccc;border-radius:6px}}
 .status{{padding:8px 12px;border-radius:8px;background:{'#fff7ed' if busy else '#ecfdf5'};border:1px solid #eee;margin:10px 0}}
 table{{border-collapse:collapse;width:100%;margin-top:14px}} th,td{{text-align:left;padding:7px 10px;border-bottom:1px solid #eee}}
-th{{color:#666;font-size:12px;text-transform:uppercase}}</style></head><body>
+th{{color:#666;font-size:12px;text-transform:uppercase}}
+.filterbar{{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0}}
+.chip{{padding:5px 11px;text-decoration:none;color:#555;background:#f3f4f6;border-radius:999px;font-weight:600;font-size:12px}}
+.chip.on{{background:#111;color:#fff}} .clr{{color:#888;text-decoration:none;align-self:center}}
+.pg{{margin:10px 0;color:#444}} .pg a{{text-decoration:none;font-weight:600;color:#111}} .pg .off{{color:#bbb}}
+</style></head><body>
 <h2>Outreach CRM</h2>
 <div class=tabs>{tabs}</div>
 <div class=bar><span class=rate>Acceptance {acc_rate} <small>({n_acc}/{n_inv})</small></span><span class=rate>Reply {rep_rate} <small>({n_rep}/{n_msg})</small></span></div>
@@ -236,16 +265,22 @@ th{{color:#666;font-size:12px;text-transform:uppercase}}</style></head><body>
  <span style="color:#888">list: <b>{h(active)}</b></span>
 </div>
 <div class=status>{h(S['msg'])}</div>
-<b>Next to follow up:</b> {nxt} <span style=color:#888>({TZ.key})</span>{f'  ·  <span style=color:#888>showing first {MAX_ROWS} of {len(show)}</span>' if extra>0 else ''}
+<b>Next to follow up:</b> {nxt} <span style=color:#888>({TZ.key})</span>
+<div class=filterbar>{chips}<span style=flex:1></span>{search}</div>
+{pager}
 <table><tr><th>Name</th><th>Company</th><th>Segment</th><th>Status</th><th>Msg</th><th>Follow up</th><th>LI</th></tr>{''.join(trs)}</table>
+{pager}
 </body></html>"""
 
 class H(BaseHTTPRequestHandler):
     def log_message(self,*a): pass
     def do_GET(self):
-        q=parse_qs(urlparse(self.path).query); active=q.get("list",["main"])[0]
+        q=parse_qs(urlparse(self.path).query)
+        active=q.get("list",["main"])[0]; status=q.get("status",["all"])[0]; qq=q.get("q",[""])[0]
+        try: pg=int(q.get("page",["1"])[0])
+        except Exception: pg=1
         self.send_response(200); self.send_header("content-type","text/html"); self.end_headers()
-        self.wfile.write(page(active).encode())
+        self.wfile.write(page(active, status, qq, pg).encode())
     def do_POST(self):
         ln=int(self.headers.get("content-length",0)); body=parse_qs(self.rfile.read(ln).decode())
         active,_=resolve(body.get("list",["main"])[0]); p=urlparse(self.path).path
