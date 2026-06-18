@@ -134,8 +134,32 @@ def has_reply(chat_id):
     _, d = api("GET", f"/api/v1/chats/{chat_id}/messages?limit=30")
     return any(m.get("is_sender") in (0, False) for m in d.get("items", []))
 
+def reconcile_sent(rows):
+    """Fold in invites that exist in LinkedIn's Sent box but aren't marked here
+    (e.g. invites sent manually / outside the CRM). Returns count newly marked."""
+    sent = {}; cur = None
+    for _ in range(20):
+        _, d = api("GET", f"/api/v1/users/invite/sent?account_id={ACCT}&limit=100"+(f"&cursor={cur}" if cur else ""))
+        for it in d.get("items", []):
+            mid = it.get("invited_user_id")
+            if mid: sent.setdefault(mid, (it.get("parsed_datetime") or "")[:10])
+        cur = d.get("cursor")
+        if not cur: break
+    n = 0
+    for r in rows:
+        if r.get("member_id") in sent and r.get("invited") != "yes":
+            r["invited"] = "yes"
+            r["invite_status"] = r.get("invite_status") or "pending"
+            r["invited_date"] = r.get("invited_date") or sent[r["member_id"]] or ds(today())
+            r["last_touch"]   = r.get("last_touch") or r["invited_date"]
+            n += 1
+    return n
+
 def do_update(scope="invited"):
     rows = load()
+    STATE["msg"]="Reconciling sent invites…"
+    recon = reconcile_sent(rows)            # catch invites sent manually / outside the CRM
+    if recon: save(rows)
     STATE["msg"]="Fetching chats…"
     chats = chat_index()
     if scope == "all":
@@ -166,7 +190,8 @@ def do_update(scope="invited"):
     rep=sum(1 for r in inv if r.get("replied")=="yes")
     due=sorted([r for r in rows if r.get("next_followup")], key=lambda r:r["next_followup"])
     nxt = hfmt(due[0]["next_followup"]) if due else "—"
-    STATE["msg"]=f"Updated {len(inv)} ({scope}). Accepted: {acc} · Replied: {rep}. Next follow-up: {nxt}."
+    rec = f" +{recon} reconciled from Sent." if recon else ""
+    STATE["msg"]=f"Updated {len(inv)} ({scope}).{rec} Accepted: {acc} · Replied: {rep}. Next follow-up: {nxt}."
 
 def run_bg(fn, *a):
     def wrap():
