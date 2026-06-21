@@ -8,7 +8,8 @@ description: Build a targeted contact list with Deepline and/or Crustdata, enric
 End-to-end recipe to (1) **build** a contact list, (2) **enrich** it with emails + LinkedIn member ids, (3) **send** paced LinkedIn connection requests, and (4) **manage** it in a tiny local web CRM with two buttons. Each stage writes a CSV; the CSV is the only state. Keep everything in one working folder.
 
 Assets in this skill:
-- `assets/crm_app.py` — the two-button web CRM (Send invites N · Update CRM).
+- `assets/crm_app.py` — the two-button web CRM (Send invites N · Update CRM). Requires Unipile.
+- `assets/list_crm.py` — standalone list CRM (zero deps, click-to-cycle status). No Unipile needed.
 - `assets/prepare_crm.py` — converts any contacts CSV into the CRM schema.
 
 Pick the tools per stage; you don't need all of them. Crustdata alone can do build+enrich; Deepline is great for CSV/play workflows; Unipile drives LinkedIn.
@@ -86,6 +87,46 @@ Dates display human-readable (`Wed, 17 Jun`) in the chosen timezone; ISO is kept
 ## Follow-up reminders
 
 The CRM's `next_followup` column is the durable source of truth. For an active nudge, schedule a one-shot reminder (CronCreate, `recurring:false`, `durable:true`) a few days out whose prompt = "load unipile env, cd to the folder, re-run the CRM update, report new accepts / replies (HOT) / due follow-ups, ask before sending." In-session crons die when the session ends — for a hard backup, add a calendar event.
+
+---
+
+---
+
+## Standalone list CRM (no Unipile required)
+
+Use `assets/list_crm.py` when you have a contacts CSV and just need to triage, track outreach status, star, and take notes — no LinkedIn automation yet.
+
+```bash
+CRM_SRC=contacts.csv \
+CRM_CSV=crm.csv \
+CRM_TITLE="My List" \
+CRM_CAT_COL=category \
+python <skill>/assets/list_crm.py
+# open http://127.0.0.1:8899
+```
+
+**Env knobs:** `CRM_SRC` (source CSV, read once to bootstrap), `CRM_CSV` (working file, default `crm.csv`), `CRM_PORT` (8899), `CRM_TITLE`, `CRM_CAT_COL` (column used as category filter pill), `CRM_STATUSES` (JSON array to override defaults).
+
+**How it works:**
+
+- On first run, copies source CSV → CRM CSV, adding `status / priority / notes / last_touch` columns.
+- Serves a `/data` JSON endpoint + a single-page client. All columns from the source CSV render as table columns automatically.
+- URL and http:// values auto-render as links; the `CRM_CAT_COL` column renders as a pill with a dropdown filter.
+
+**Click-to-cycle status state machine.** Each row has a colored pill for status. One click advances to the next state; wraps around at the end. No dropdown, no form submit — just click. This is far faster to use than a select when triaging 100+ rows.
+
+Default funnel (covers both LinkedIn and email outreach paths):
+```
+To review → Following → Sent invite → Connected →
+Sent message → Sent email → Replied → Talked → Pass → (wraps)
+```
+Override via `CRM_STATUSES='["Cold","Warm","Hot","Pass"]'` for a simpler funnel.
+
+**Status pill colours** are defined in `STATUS_CSS` at the top of `list_crm.py`. Add a new line per status — the `data-v` attribute on the pill drives CSS targeting.
+
+**Atomic CSV writes.** All saves go through `tmp + os.replace()` — no truncation risk if the process dies mid-write.
+
+**Graduating to the Unipile CRM.** Once you've triaged the list and want to start sending LinkedIn invites, run `prepare_crm.py` on your CRM CSV to convert it to the `crm_app.py` schema (which adds `member_id`, `invited`, `invite_status`, etc.).
 
 ---
 
